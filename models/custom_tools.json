@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "open-terminal:8000": {
+      "command": "python3",
+      "args": [
+        "-u",
+        "/workspace/tools/execute_command.py"
+      ],
+      "env": {
+        "WORKSPACE_DIR": "/workspace"
+      }
+    }
+  }
+}
