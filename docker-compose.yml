@@ -1,0 +1,156 @@
+networks:
+  ai-platform-mesh:
+    driver: bridge
+    name: ai-platform-mesh
+
+services:
+  # 1. DYNAMIC LLM INFERENCE ENGINE (Router Mode - Native Linux Paths)
+  llama-cpp-server:
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    container_name: llama-cpp-server
+    ports:
+      - "8080:8080"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./models:/models
+      - ./workspace:/workspace
+      #- /usr/bin/node:/usr/bin/node
+    networks:
+      - ai-platform-mesh
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: >
+      --models-dir /models
+      --models-preset /models/presets.ini
+      --mcp-servers-config /models/custom_tools.json
+      --tools all
+      --parallel 1
+    restart: unless-stopped
+
+  # 2. DEV INTERFACE (Frontend Chat Layer)
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    environment:
+      - OPENAI_API_BASE_URL=http://llama-cpp-server:8080/v1/
+      - OPENAI_API_KEY=vram-beast-key
+      #- WEBUI_SECRET_KEY=super_secret_dev_key
+      # Connect Open WebUI RAG directly to your new specialized containers
+      #- RAG_EMBEDDING_ENGINE=openai
+      #- RAG_OPENAI_API_BASE_URL=http://llama-cpp-embedding:8082/
+      #- RAG_OPENAI_API_KEY=vram-beast-key
+      #- RAG_RERANKING_ENGINE=openai
+      #- RAG_RERANKING_OPENAI_BASE_URL=http://llama-cpp-reranker:8083/
+      #- RAG_RERANKING_OPENAI_API_KEY=vram-beast-key
+      #- CONTEXT_COMPACTION_TOKEN_THRESHOLD=75000
+      #- CONTEXT_COMPACTION_TOKEN_CAP=78000
+    volumes:
+      - open_webui_data:/app/backend/data
+    networks:
+      - ai-platform-mesh
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - llama-cpp-server
+      #- llama-cpp-embedding
+      #- llama-cpp-reranker
+    restart: unless-stopped
+
+  # 3. DEDICATED EXECUTION SANDBOX (Your Terminal Workspace)
+  open-terminal:
+    image: ghcr.io/open-webui/open-terminal
+    container_name: open-terminal
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+      #- "3001:3001"
+    user: "${UID}:${GID}"
+    environment:
+      - OPEN_TERMINAL_API_KEY=your-secret-key
+    volumes:
+      - ./workspace:/workspace
+      - ./models:/models
+      - ./open-terminal:/home/user
+      - /var/run/docker.sock:/var/run/docker.sock
+      #- /usr/bin/node:/usr/bin/node
+    networks:
+      - ai-platform-mesh
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  # 4. VECTOR KNOWLEDGE BASE (Long-term memory for embeddings)
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant
+    ports:
+      - "6333:6333" # REST API port
+      - "6334:6334" # gRPC port (best for high-speed agent queries)
+    volumes:
+      #- ../../../mnt/wsl/db_storage/qdrant:/qdrant/storage
+      - qdrant_data_persistent:/qdrant/storage
+    networks:
+      - ai-platform-mesh
+    restart: unless-stopped
+
+  # 5. STRUCTURED DATA STORE (Relational database for state tracking)
+  postgres:
+    image: postgres:16-alpine
+    container_name: postgres-sql-db
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: platform_dev
+      POSTGRES_PASSWORD: secure_dev_password
+      POSTGRES_DB: ai_platform
+      PGDATA: /var/lib/postgresql/data/pgdata # Prevents silent database clears
+    volumes:
+      - postgres_data_persistent:/var/lib/postgresql/data
+    networks:
+      - ai-platform-mesh
+    restart: unless-stopped
+
+  # 6. CACHE & MESSAGE BROKER (Fast state management and agent queues)
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    #ports:
+    #  - "6379:6379"
+    expose:
+      - "6379" # Only exposes port inside the ai-platform-mesh docker network
+    command: redis-server --requirepass secure_redis_password --appendonly yes
+    volumes:
+      #- /mnt/wsl/db_storage/redis:/data
+      - redis_data_persistent:/data
+    networks:
+      - ai-platform-mesh
+    restart: unless-stopped
+
+  # 7. INTERNAL SEARCH AGGREGATOR (SearXNG - ARIA web-search tooling, mesh-only)
+  searxng:
+    image: searxng/searxng:latest
+    container_name: searxng
+    # No host ports: reachable only from inside the ai-platform-mesh network
+    environment:
+      - SEARXNG_PORT=8888
+      - SEARXNG_BIND_ADDRESS=0.0.0.0
+      - SEARXNG_IMAGE_PROXY=false
+    volumes:
+      - /home/zacharyagrue/ai-platform/workspace/searxng:/etc/searxng
+    networks:
+      - ai-platform-mesh
+    restart: unless-stopped
+
+volumes:
+  open_webui_data:
+  postgres_data_persistent:
+  qdrant_data_persistent:   # Isolated Linux layer for your vectors
+  redis_data_persistent:    # Isolated Linux layer for your agent message queues
