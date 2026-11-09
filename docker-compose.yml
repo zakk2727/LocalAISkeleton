@@ -6,7 +6,7 @@ networks:
 services:
   # 1. DYNAMIC LLM INFERENCE ENGINE (Router Mode - Native Linux Paths)
   llama-cpp-server:
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda13
     container_name: llama-cpp-server
     ports:
       - "8080:8080"
@@ -29,9 +29,11 @@ services:
     command: >
       --models-dir /models
       --models-preset /models/presets.ini
+      --model-draft /models/mtp-gemma-4-12b-it-uncensored.gguf
+      --spec-type draft-mtp
+      --spec-draft-n-max 4
       --mcp-servers-config /models/custom_tools.json
       --tools all
-      --parallel 1
     restart: unless-stopped
 
   # 2. DEV INTERFACE (Frontend Chat Layer)
