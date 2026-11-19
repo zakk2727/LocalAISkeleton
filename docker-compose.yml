@@ -15,7 +15,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./models:/models
-      - .:/ai-platform-private
+      - .:/ai-platform
       #- /usr/bin/node:/usr/bin/node
     networks:
       - ai-platform-mesh
