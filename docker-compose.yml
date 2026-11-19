@@ -15,7 +15,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./models:/models
-      - ./workspace:/workspace
+      - .:/ai-platform-private
       #- /usr/bin/node:/usr/bin/node
     networks:
       - ai-platform-mesh
@@ -27,10 +27,49 @@ services:
               count: 1
               capabilities: [gpu]
     command: >
-      --models-dir /models
       --models-preset /models/presets.ini
+      --webui-mcp-proxy
+      --jinja
       --mcp-servers-config /models/custom_tools.json
       --tools all
+      --models-max 2
+    restart: unless-stopped
+
+  # 1b. DEDICATED EMBEDDING SERVER (CPU Bound to save VRAM)
+  llama-cpp-embedding:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: llama-cpp-embedding
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./models:/models
+    networks:
+      - ai-platform-mesh
+    command: >
+      -m /models/bge-m3-Q8_0.gguf
+      --port 8082
+      --host 0.0.0.0
+      -ngl 0
+      --embedding
+    restart: unless-stopped
+
+  # 1c. DEDICATED RERANKER SERVER (CPU Bound to save VRAM)
+  llama-cpp-reranker:
+    image: ghcr.io/ggml-org/llama.cpp:server
+    container_name: llama-cpp-reranker
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./models:/models
+    networks:
+      - ai-platform-mesh
+    command: >
+      -m /models/bge-reranker-large-q8_0.gguf
+      --port 8083
+      --host 0.0.0.0
+      -ngl 0
+      --reranking 
+      --pooling rank
     restart: unless-stopped
 
   # 2. DEV INTERFACE (Frontend Chat Layer)
@@ -72,7 +111,7 @@ services:
     ports:
       - "8000:8000"
       #- "3001:3001"
-    user: "${UID}:${GID}"
+    user: "${UID:-1000}:${GID:-1000}"
     environment:
       - OPEN_TERMINAL_API_KEY=your-secret-key
     volumes:
@@ -94,7 +133,6 @@ services:
       - "6333:6333" # REST API port
       - "6334:6334" # gRPC port (best for high-speed agent queries)
     volumes:
-      #- ../../../mnt/wsl/db_storage/qdrant:/qdrant/storage
       - qdrant_data_persistent:/qdrant/storage
     networks:
       - ai-platform-mesh
@@ -102,7 +140,7 @@ services:
 
   # 5. STRUCTURED DATA STORE (Relational database for state tracking)
   postgres:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: postgres-sql-db
     ports:
       - "5432:5432"
@@ -119,7 +157,7 @@ services:
 
   # 6. CACHE & MESSAGE BROKER (Fast state management and agent queues)
   redis:
-    image: redis:7-alpine
+    image: redis:8.8-alpine
     container_name: redis-cache
     #ports:
     #  - "6379:6379"
@@ -127,7 +165,6 @@ services:
       - "6379" # Only exposes port inside the ai-platform-mesh docker network
     command: redis-server --requirepass secure_redis_password --appendonly yes
     volumes:
-      #- /mnt/wsl/db_storage/redis:/data
       - redis_data_persistent:/data
     networks:
       - ai-platform-mesh
@@ -143,7 +180,7 @@ services:
       - SEARXNG_BIND_ADDRESS=0.0.0.0
       - SEARXNG_IMAGE_PROXY=false
     volumes:
-      - /home/zacharyagrue/ai-platform/workspace/searxng:/etc/searxng
+      - /workspace/searxng:/etc/searxng
     networks:
       - ai-platform-mesh
     restart: unless-stopped
